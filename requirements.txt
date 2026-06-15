@@ -1,0 +1,10 @@
+# HTTP requests & Crawling
+requests==2.33.1
+
+# HTML parsing
+beautifulsoup4==4.14.3
+
+# HTML to Markdown conversion & formatting
+markdownify==1.2.2
+trafilatura==2.0.0
+mdformat==1.0.0
