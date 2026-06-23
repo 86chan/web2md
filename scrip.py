@@ -26,6 +26,46 @@ def parse_size(size_str: str) -> int:
         ) from e
 
 
+# リンクとして辿る（＝成果物に含まれうる）テキスト系の拡張子
+ALLOWED_LINK_EXTENSIONS = {
+    '', '.html', '.htm', '.txt', '.md', '.rst', '.xml', '.json',
+    '.php', '.jsp', '.asp', '.aspx', '.shtml', '.cgi'
+}
+
+
+def url_to_bundle_path(url: str, flat: bool = False) -> str:
+    """クロール対象URLを成果物内の相対ファイルパスに変換する。
+    flat=False: 'folder/file.md'（結合モードの File: 見出しと一致）
+    flat=True : 'folder_file.md'（--no-merge の個別ファイル名と一致）"""
+    relative_path = urlparse(url).path.strip('/')
+    path_obj = PurePosixPath(relative_path)
+    if path_obj.suffix.lower() in {'.html', '.htm', '.txt', '.md'}:
+        base_path = str(path_obj.with_suffix(''))
+    else:
+        base_path = relative_path
+    name = 'index' if (not base_path or base_path == 'docs') else base_path
+    return (name.replace('/', '_') if flat else name) + '.md'
+
+
+def rewrite_links_for_bundle(html: str, current_url: str,
+                             limit_prefix_norm: str, flat: bool) -> str:
+    """本文HTML中の内部リンク（クロール対象内のテキストページ）を、
+    成果物内のファイルパスへ書き換える。外部・非テキスト・対象外のリンクは変更しない。"""
+    frag = BeautifulSoup(html, 'html.parser')
+    for a in frag.find_all('a', href=True):
+        href = a['href']
+        if href.lstrip().startswith('#'):
+            continue  # 同一ページ内アンカーはそのまま残す
+        clean_url = urljoin(current_url, href).split('#')[0].rstrip('/')
+        suffix = Path(urlparse(clean_url).path).suffix.lower()
+        is_numeric = bool(re.match(r'^\.[0-9]+$', suffix))
+        is_text = suffix in ALLOWED_LINK_EXTENSIONS or is_numeric
+        if is_text and clean_url.startswith(limit_prefix_norm):
+            a['href'] = url_to_bundle_path(clean_url, flat=flat)
+        # それ以外は変更しない
+    return str(frag)
+
+
 # --- メイン処理関数 ---
 def main(args):
     # --- 設定 ---
@@ -108,7 +148,12 @@ def main(args):
                 # 2. markdownifyでMarkdown変換を実行
                 # ナビゲーション等のノイズを避けるため、可能なら main または article 要素を抽出する
                 main_content = soup.find('main') or soup.find('article')
-                html_to_convert = str(main_content) if main_content else res.text
+                src_html = str(main_content) if main_content else res.text
+
+                # 内部リンクを成果物内のパスへ書き換える（再パースするため soup は汚さない）
+                html_to_convert = rewrite_links_for_bundle(
+                    src_html, current_url, limit_prefix_norm, flat=args.no_merge
+                )
 
                 raw_markdown = markdownify(
                     html_to_convert,
@@ -127,30 +172,15 @@ def main(args):
                     content_to_save = raw_markdown
                 
                 content_to_save = content_to_save.lstrip('\ufeff')
-                ext = ".md"
-
-                # 拡張子の正規化: 既知のテキスト拡張子があれば事前に除去する
-                path_obj = PurePosixPath(relative_path)
-                if path_obj.suffix.lower() in {'.html', '.htm', '.txt', '.md'}:
-                    base_path = str(path_obj.with_suffix(''))
-                else:
-                    base_path = relative_path
-
-                if not base_path or base_path == 'docs':
-                    file_name = f"index{ext}"
-                else:
-                    file_name = base_path.replace('/', '_') + ext
 
                 if args.no_merge:
+                    file_name = url_to_bundle_path(current_url, flat=True)
                     file_path = out_dir / file_name
                     with open(file_path, "w", encoding="utf-8", newline="\n") as f:
                         f.write(content_to_save)
                     print(f"  [Saved Markdown] {file_path}")
                 else:
-                    if not base_path or base_path == 'docs':
-                        file_path = f"index{ext}"
-                    else:
-                        file_path = base_path + ext
+                    file_path = url_to_bundle_path(current_url, flat=False)
                     ingested_data[file_path] = content_to_save
 
             # 正常に処理が完了したらvisitedに追加
