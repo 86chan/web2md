@@ -56,6 +56,50 @@ def test_rewrite_links_rewrites_internal_text_links() -> None:
     assert 'href="/docs/image.png"' in result
 
 
+def _make_config(**overrides: object) -> CrawlConfig:
+    """テスト用の CrawlConfig を既定値付きで生成するヘルパー。"""
+    params: dict[str, object] = {
+        "start_url": "https://ex.com/docs",
+        "limit_prefix": "https://ex.com/docs",
+        "output": "out.md",
+        "max_size": 10_000,
+        "max_size_str": "10KB",
+        "as_html": False,
+        "no_merge": False,
+        "delay_min": 0.0,
+        "delay_max": 0.0,
+    }
+    params.update(overrides)
+    return CrawlConfig(**params)  # type: ignore[arg-type]
+
+
+def test_next_delay_returns_value_within_range() -> None:
+    """
+    next_delay がランダム待機を下限〜上限の範囲で返すことを検証する。
+
+    Given: 下限 0.5・上限 1.7 の設定。
+    When: next_delay を多数回呼ぶ。
+    Then: すべての戻り値が 0.5 以上 1.7 以下に収まること。
+    """
+    config = _make_config(delay_min=0.5, delay_max=1.7)
+    samples = [config.next_delay() for _ in range(200)]
+    assert all(0.5 <= value <= 1.7 for value in samples)
+    # ランダム性により少なくとも2種類以上の値が出ること
+    assert len({round(value, 4) for value in samples}) > 1
+
+
+def test_next_delay_falls_back_to_min_when_max_not_greater() -> None:
+    """
+    上限が下限以下のとき next_delay が下限値を返すことを検証する。
+
+    Given: 下限 0.3・上限 0.0 の設定。
+    When: next_delay を呼ぶ。
+    Then: 戻り値が下限 0.3 となること。
+    """
+    config = _make_config(delay_min=0.3, delay_max=0.0)
+    assert config.next_delay() == 0.3
+
+
 @responses.activate
 def test_crawl_merges_pages_into_single_bundle(tmp_path: Path) -> None:
     """
@@ -90,7 +134,8 @@ def test_crawl_merges_pages_into_single_bundle(tmp_path: Path) -> None:
         max_size_str="10KB",
         as_html=False,
         no_merge=False,
-        delay=0.0,
+        delay_min=0.0,
+        delay_max=0.0,
     )
     scrip.crawl(config)
 
@@ -122,7 +167,8 @@ def test_crawl_skips_404_without_retry(tmp_path: Path) -> None:
         max_size_str="10KB",
         as_html=False,
         no_merge=False,
-        delay=0.0,
+        delay_min=0.0,
+        delay_max=0.0,
     )
     scrip.crawl(config)
 

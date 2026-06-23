@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -63,7 +64,8 @@ class CrawlConfig:
         max_size_str (str): 上限の元表記
         as_html (bool): 生 HTML 保存モード
         no_merge (bool): Markdown 個別保存モード
-        delay (float): リクエスト間の待機秒数
+        delay_min (float): リクエスト間待機のランダム下限秒数
+        delay_max (float): リクエスト間待機のランダム上限秒数
     """
 
     start_url: str
@@ -73,7 +75,21 @@ class CrawlConfig:
     max_size_str: str
     as_html: bool
     no_merge: bool
-    delay: float
+    delay_min: float
+    delay_max: float
+
+    def next_delay(self) -> float:
+        """
+        次リクエストまでのランダム待機秒数算出
+
+        下限以上・上限以下の一様乱数、上限が下限以下なら下限を返す
+
+        Returns:
+            float: 待機秒数
+        """
+        if self.delay_max <= self.delay_min:
+            return self.delay_min
+        return random.uniform(self.delay_min, self.delay_max)
 
 
 def url_to_bundle_path(url: str, flat: bool = False) -> str:
@@ -328,9 +344,10 @@ def crawl(config: CrawlConfig) -> None:
             visited.add(normalized_url)
             enqueue_links(soup, current_url, config, visited, to_visit)
 
-            # サーバ負荷軽減のためリクエスト間に待機を挟む
-            if config.delay > 0:
-                time.sleep(config.delay)
+            # サーバ負荷軽減のためリクエスト間にランダムな待機を挟む
+            wait_seconds = config.next_delay()
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
 
         except requests.exceptions.RequestException as error:
             _handle_request_error(
@@ -459,7 +476,13 @@ def cli() -> None:
         "--delay",
         type=float,
         default=0.5,
-        help="リクエスト間の待機秒数 (サーバ負荷軽減用)。デフォルトは 0.5",
+        help="リクエスト間ランダム待機の下限秒数 (サーバ負荷軽減用)。デフォルトは 0.5",
+    )
+    parser.add_argument(
+        "--delay-max",
+        type=float,
+        default=1.7,
+        help="リクエスト間ランダム待機の上限秒数。デフォルトは 1.7",
     )
     parser.add_argument(
         "--html",
@@ -483,7 +506,8 @@ def cli() -> None:
         max_size_str=args.max_size,
         as_html=args.html,
         no_merge=args.no_merge,
-        delay=args.delay,
+        delay_min=args.delay,
+        delay_max=args.delay_max,
     )
     crawl(config)
 

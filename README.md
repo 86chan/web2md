@@ -37,7 +37,8 @@ python scrip.py -u <開始URL> -o <出力ファイル名> [オプション]
 | `-p, --prefix` | URLと同等 | クロールを許可するURLの接頭辞（制限用） |
 | `-o, --output` | **必須** | 出力ファイル名（`--no-merge`時は出力ディレクトリ名） |
 | `-m, --max-size` | `1MB` | 1ファイルあたりの最大サイズ（例: `500KB`, `1.5MB`, `1048576`） |
-| `-d, --delay` | `0.5` | リクエスト間の待機秒数（サーバ負荷軽減）。`0` で無効化 |
+| `-d, --delay` | `0.5` | リクエスト間ランダム待機の下限秒数（サーバ負荷軽減） |
+| `--delay-max` | `1.7` | リクエスト間ランダム待機の上限秒数 |
 | `--html` | `False` | Markdown変換を行わず生のHTMLとして保存 |
 | `--no-merge` | `False` | 結合せず各ページを個別のMarkdownファイルとして保存 |
 
@@ -56,8 +57,8 @@ python scrip.py -u https://example.com/docs -o output_dir --no-merge
 # 500KB ごとに分割
 python scrip.py -u https://example.com/docs -o split.md -m 500KB
 
-# リクエスト間に1秒の待機を入れてクロール（サーバ負荷軽減）
-python scrip.py -u https://example.com/docs -o docs.md --delay 1
+# リクエスト間に 0.5〜1.7 秒のランダム待機を入れてクロール（既定動作・サーバ負荷軽減）
+python scrip.py -u https://example.com/docs -o docs.md --delay 0.5 --delay-max 1.7
 ```
 
 ## 出力形式
