@@ -37,6 +37,7 @@ python scrip.py -u <開始URL> -o <出力ファイル名> [オプション]
 | `-p, --prefix` | URLと同等 | クロールを許可するURLの接頭辞（制限用） |
 | `-o, --output` | **必須** | 出力ファイル名（`--no-merge`時は出力ディレクトリ名） |
 | `-m, --max-size` | `1MB` | 1ファイルあたりの最大サイズ（例: `500KB`, `1.5MB`, `1048576`） |
+| `-d, --delay` | `0.5` | リクエスト間の待機秒数（サーバ負荷軽減）。`0` で無効化 |
 | `--html` | `False` | Markdown変換を行わず生のHTMLとして保存 |
 | `--no-merge` | `False` | 結合せず各ページを個別のMarkdownファイルとして保存 |
 
@@ -54,6 +55,9 @@ python scrip.py -u https://example.com/docs -o output_dir --no-merge
 
 # 500KB ごとに分割
 python scrip.py -u https://example.com/docs -o split.md -m 500KB
+
+# リクエスト間に1秒の待機を入れてクロール（サーバ負荷軽減）
+python scrip.py -u https://example.com/docs -o docs.md --delay 1
 ```
 
 ## 出力形式
@@ -88,6 +92,27 @@ File: folder/subfolder/file.md
 - `markdownify`: HTML → Markdown 変換
 - `mdformat`: Markdown フォーマット整形
 - `trafilatura` (merge.pyで使用): 高精度な本文抽出
+
+## 開発
+
+品質チェック（Lint / 型 / テスト）は以下で実行できます。
+
+```bash
+# 開発用依存のインストール
+pip install -r requirements-dev.txt
+
+# Lint・フォーマット確認
+ruff check .
+ruff format --check .
+
+# 静的型チェック（mypy strict）
+mypy .
+
+# テスト
+pytest
+```
+
+CI（GitHub Actions）でも push / pull request 時に上記を Python 3.11 / 3.12 で自動実行します。
 
 ---
 このプロジェクトは、LLMへのコンテキスト注入用データセット作成を支援するために作成されました。
