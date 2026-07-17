@@ -144,7 +144,7 @@ def aggregate_texts(
         logger.error("指定されたディレクトリ '%s' が見つかりません", target_dir)
         return
 
-    max_size = parse_size(max_size_str)
+    size_limit = parse_size(max_size_str)
     target_extensions = extensions if extensions is not None else DEFAULT_EXTENSIONS
 
     # 収集データを格納 { "仮想ファイルパス": "中身のテキスト" }
@@ -178,7 +178,7 @@ def aggregate_texts(
         return
 
     sections = build_sections(ingested_data)
-    write_bundle(sections, output_file, max_size, max_size_str)
+    write_bundle(sections, output_file, size_limit)
 
 
 def cli() -> None:
@@ -209,7 +209,10 @@ def cli() -> None:
         "--max-size",
         type=str,
         default="1MB",
-        help="1ファイルあたりの最大サイズ (例: 500KB, 1MB, 1048576)。デフォルトは 1MB",
+        help=(
+            "1ファイルあたりの最大サイズ (例: 500KB, 1MB, 1048576)\n"
+            "50000w のような単語数指定も可能。デフォルトは 1MB"
+        ),
     )
 
     args = parser.parse_args()

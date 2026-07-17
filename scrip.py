@@ -21,7 +21,13 @@ import requests
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
-from common import build_sections, is_text_link_suffix, parse_size, write_bundle
+from common import (
+    SizeLimit,
+    build_sections,
+    is_text_link_suffix,
+    parse_size,
+    write_bundle,
+)
 
 logger = logging.getLogger("web2md")
 
@@ -59,8 +65,7 @@ class CrawlConfig:
 
     Attributes:
         output (str): 出力ファイル/ディレクトリ
-        max_size (int): 1ファイル上限バイト数
-        max_size_str (str): 上限の元表記
+        size_limit (SizeLimit): 1ファイル上限（バイト数または単語数）
         as_html (bool): 生 HTML 保存モード
         no_merge (bool): Markdown 個別保存モード
         delay_min (float): リクエスト間待機のランダム下限秒数
@@ -71,8 +76,7 @@ class CrawlConfig:
     """
 
     output: str
-    max_size: int
-    max_size_str: str
+    size_limit: SizeLimit
     as_html: bool
     no_merge: bool
     delay_min: float
@@ -819,7 +823,7 @@ def _finalize(
 
     logger.info("クロール完了。結合ファイルを作成しています...")
     sections = build_sections(ingested_data)
-    write_bundle(sections, config.output, config.max_size, config.max_size_str)
+    write_bundle(sections, config.output, config.size_limit)
 
 
 def cli() -> None:
@@ -864,7 +868,10 @@ def cli() -> None:
         "--max-size",
         type=str,
         default="1MB",
-        help="1ファイルあたりの最大サイズ (例: 500KB, 1MB, 1048576)。デフォルトは 1MB",
+        help=(
+            "1ファイルあたりの最大サイズ (例: 500KB, 1MB, 1048576)\n"
+            "50000w のような単語数指定も可能。デフォルトは 1MB"
+        ),
     )
     parser.add_argument(
         "-d",
@@ -906,8 +913,7 @@ def cli() -> None:
             limit_prefix=limit_prefix,
             local_path=None,
             output=args.output,
-            max_size=parse_size(args.max_size),
-            max_size_str=args.max_size,
+            size_limit=parse_size(args.max_size),
             as_html=args.html,
             no_merge=args.no_merge,
             delay_min=args.delay,
@@ -921,8 +927,7 @@ def cli() -> None:
             limit_prefix=None,
             local_path=args.local_path,
             output=args.output,
-            max_size=parse_size(args.max_size),
-            max_size_str=args.max_size,
+            size_limit=parse_size(args.max_size),
             as_html=args.html,
             no_merge=args.no_merge,
             delay_min=args.delay,

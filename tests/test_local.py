@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from common import SizeLimit
 from scrip import (
     CrawlConfig,
     process_local_directory,
@@ -146,8 +147,7 @@ def test_process_local_directory(tmp_path: Path, workers: int | None) -> None:
         limit_prefix=None,
         local_path=str(base_dir),
         output=str(output_file),
-        max_size=10_000,
-        max_size_str="10KB",
+        size_limit=SizeLimit(value=10_000, unit="bytes", raw="10KB"),
         as_html=False,
         no_merge=False,
         delay_min=0.0,
@@ -203,8 +203,7 @@ def test_process_local_file_links(tmp_path: Path, workers: int | None) -> None:
         limit_prefix=None,
         local_path=str(base_dir / "index.html"),
         output=str(output_file),
-        max_size=10_000,
-        max_size_str="10KB",
+        size_limit=SizeLimit(value=10_000, unit="bytes", raw="10KB"),
         as_html=False,
         no_merge=False,
         delay_min=0.0,

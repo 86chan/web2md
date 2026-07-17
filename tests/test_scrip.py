@@ -8,6 +8,7 @@ import pytest
 import responses
 
 import scrip
+from common import SizeLimit
 from scrip import CrawlConfig, rewrite_links_for_bundle, url_to_bundle_path
 
 
@@ -62,8 +63,7 @@ def _make_config(**overrides: object) -> CrawlConfig:
         "start_url": "https://ex.com/docs",
         "limit_prefix": "https://ex.com/docs",
         "output": "out.md",
-        "max_size": 10_000,
-        "max_size_str": "10KB",
+        "size_limit": SizeLimit(value=10_000, unit="bytes", raw="10KB"),
         "as_html": False,
         "no_merge": False,
         "delay_min": 0.0,
@@ -130,8 +130,7 @@ def test_crawl_merges_pages_into_single_bundle(tmp_path: Path) -> None:
         start_url=base,
         limit_prefix=base,
         output=str(output),
-        max_size=10_000,
-        max_size_str="10KB",
+        size_limit=SizeLimit(value=10_000, unit="bytes", raw="10KB"),
         as_html=False,
         no_merge=False,
         delay_min=0.0,
@@ -163,8 +162,7 @@ def test_crawl_skips_404_without_retry(tmp_path: Path) -> None:
         start_url=base,
         limit_prefix=base,
         output=str(output),
-        max_size=10_000,
-        max_size_str="10KB",
+        size_limit=SizeLimit(value=10_000, unit="bytes", raw="10KB"),
         as_html=False,
         no_merge=False,
         delay_min=0.0,
