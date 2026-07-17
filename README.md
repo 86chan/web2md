@@ -14,6 +14,7 @@ Webサイトのドキュメントをクロールし、1つのテキストファ�
     - HTMLとしてそのまま保存
     - Markdownとして個別のファイルに保存
 - **ディレクトリ構造の可視化**: ファイルのツリー構造を冒頭に自動含めます
+- **並行処理による高速化**: ローカルファイル処理においてスレッド並行処理をサポート。大量のローカルHTMLファイルの変換処理を高速化できます
 
 ## 使用方法
 
@@ -42,6 +43,7 @@ python scrip.py [-u <開始URL> | -l <ローカルパス>] -o <出力ファイ�
 | `--delay-max` | `1.7` | リクエスト間ランダム待機の上限秒数（Webモードのみ有効） |
 | `--html` | `False` | Markdown変換を行わず生のHTMLとして保存 |
 | `--no-merge` | `False` | 結合せず各ページを個別のMarkdownファイルとして保存 |
+| `-w, --workers` | `None` | 並列ワーカー数（デフォルトはCPUコア数。1 を指定すると並行化なし。ローカルモードのみ有効） |
 
 #### 実行例
 
@@ -54,6 +56,9 @@ python scrip.py -u https://example.com/docs -p https://example.com/docs/api -o a
 
 # ローカル: 指定ディレクトリ内のすべてのHTMLファイルを再帰探索して集約
 python scrip.py -l ./local_site -o local_docs.md
+
+# ローカル: 4つの並行ワーカーを指定し、高速に変換・集約
+python scrip.py -l ./local_site -o local_docs.md -w 4
 
 # ローカル: 起点HTMLからリンクされているファイルを再帰追跡して個別に保存
 python scrip.py -l ./local_site/index.html -o output_dir --no-merge
