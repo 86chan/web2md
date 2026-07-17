@@ -392,6 +392,7 @@ def process_single_local_file(
     Returns:
         LocalProcessResult | None: 処理結果、エラー時は None
     """
+    logger.info("Processing: %s", file_path)
     try:
         raw_html = file_path.read_text(encoding="utf-8", errors="replace")
         soup = BeautifulSoup(raw_html, "html.parser")
@@ -480,7 +481,6 @@ def process_local_directory(config: CrawlConfig) -> None:
     # 1スレッド指定の場合は逐次処理
     if config.workers == 1:
         for file_path in html_files:
-            logger.info("Processing: %s", file_path)
             result = process_single_local_file(
                 file_path, base_dir, config, extract_links=False
             )
@@ -506,7 +506,7 @@ def process_local_directory(config: CrawlConfig) -> None:
                 file_path = futures[future]
                 completed_count += 1
                 logger.info(
-                    "[%d/%d] Processing: %s",
+                    "[%d/%d] Completed: %s",
                     completed_count,
                     total_files,
                     file_path,
@@ -565,7 +565,6 @@ def process_local_file_links(config: CrawlConfig) -> None:
 
         if config.workers == 1:
             for file_path in current_batch:
-                logger.info("Processing: %s", file_path)
                 result = process_single_local_file(
                     file_path, base_dir, config, extract_links=True
                 )
@@ -588,9 +587,17 @@ def process_local_file_links(config: CrawlConfig) -> None:
                     for file_path in current_batch
                 }
 
+                total_in_batch = len(current_batch)
+                completed_count = 0
                 for future in as_completed(futures):
                     file_path = futures[future]
-                    logger.info("Processing: %s", file_path)
+                    completed_count += 1
+                    logger.info(
+                        "[%d/%d] Completed: %s",
+                        completed_count,
+                        total_in_batch,
+                        file_path,
+                    )
                     try:
                         result = future.result()
                         if result:
