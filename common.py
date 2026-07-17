@@ -278,7 +278,7 @@ def write_bundle(
 
     for section in sections:
         section_measure = _measure(section, size_limit)
-        next_filename = f"{stem}_part_{file_idx + 1}{suffix}"
+        next_filename = f"{stem}_part_{file_idx + 1:04d}{suffix}"
         footer = (
             f"\n\n>>> NOTE: This file has been split. Continued in: {next_filename}\n"
         )
@@ -290,7 +290,7 @@ def write_bundle(
             current_measure > 0
             and (current_measure + section_measure + footer_measure) > size_limit.value
         ):
-            part_path = out_dir / f"{stem}_part_{file_idx}{suffix}"
+            part_path = out_dir / f"{stem}_part_{file_idx:04d}{suffix}"
             part_path.write_text(
                 (current_content + footer).lstrip("\ufeff"),
                 encoding="utf-8",
@@ -309,7 +309,7 @@ def write_bundle(
 
     # 残余コンテンツを最終パートとして書き出し（フッターなし）
     if current_content:
-        part_path = out_dir / f"{stem}_part_{file_idx}{suffix}"
+        part_path = out_dir / f"{stem}_part_{file_idx:04d}{suffix}"
         part_path.write_text(
             current_content.lstrip("\ufeff"), encoding="utf-8", newline="\n"
         )
