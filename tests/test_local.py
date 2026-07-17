@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scrip import (
     CrawlConfig,
     process_local_directory,
@@ -108,7 +110,8 @@ def test_rewrite_local_links(tmp_path: Path) -> None:
     assert 'href="folder_page.md"' in result_flat
 
 
-def test_process_local_directory(tmp_path: Path) -> None:
+@pytest.mark.parametrize("workers", [None, 1, 4])
+def test_process_local_directory(tmp_path: Path, workers: int | None) -> None:
     """
     ディレクトリ内の HTML ファイルが探索され、成果物へ集約されることを検証する。
 
@@ -149,6 +152,7 @@ def test_process_local_directory(tmp_path: Path) -> None:
         no_merge=False,
         delay_min=0.0,
         delay_max=0.0,
+        workers=workers,
     )
 
     process_local_directory(config)
@@ -163,7 +167,8 @@ def test_process_local_directory(tmp_path: Path) -> None:
     assert "Ignored txt" not in content
 
 
-def test_process_local_file_links(tmp_path: Path) -> None:
+@pytest.mark.parametrize("workers", [None, 1, 4])
+def test_process_local_file_links(tmp_path: Path, workers: int | None) -> None:
     """
     起点 HTML からリンクされているローカル HTML のみが再帰追跡されることを検証する。
 
@@ -204,6 +209,7 @@ def test_process_local_file_links(tmp_path: Path) -> None:
         no_merge=False,
         delay_min=0.0,
         delay_max=0.0,
+        workers=workers,
     )
 
     process_local_file_links(config)

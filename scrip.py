@@ -11,6 +11,7 @@ import argparse
 import logging
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urljoin, urlparse
@@ -79,6 +80,7 @@ class CrawlConfig:
     start_url: str | None = None
     limit_prefix: str | None = None
     local_path: str | None = None
+    workers: int | None = None
 
     def next_delay(self) -> float:
         """
@@ -350,9 +352,108 @@ def convert_local_to_markdown(
     return _format_markdown(raw_markdown).lstrip("\ufeff")
 
 
+@dataclass(frozen=True)
+class LocalProcessResult:
+    """
+    ローカルHTMLファイル処理結果の保持構造体
+
+    ファイル処理で得られたメタデータや変換データの格納
+
+    Attributes:
+        file_path (Path): 処理対象の元ファイルパス
+        bundle_path (str | None): 結合用データキー
+        markdown (str | None): 変換後 Markdown 本文
+        extracted_links (list[Path]): 抽出されたリンク先ローカルファイルパス一覧
+    """
+
+    file_path: Path
+    bundle_path: str | None
+    markdown: str | None
+    extracted_links: list[Path]
+
+
+def process_single_local_file(
+    file_path: Path,
+    base_dir: Path,
+    config: CrawlConfig,
+    extract_links: bool = False,
+) -> LocalProcessResult | None:
+    """
+    単一ローカルHTMLファイルの変換および保存処理
+
+    HTMLパース、Markdown変換、リンク抽出の実行
+
+    Args:
+        file_path (Path): 処理対象ファイルパス
+        base_dir (Path): 探索起点となるベースディレクトリ
+        config (CrawlConfig): クロール設定
+        extract_links (bool): リンク抽出を行うか
+
+    Returns:
+        LocalProcessResult | None: 処理結果、エラー時は None
+    """
+    try:
+        raw_html = file_path.read_text(encoding="utf-8", errors="replace")
+        soup = BeautifulSoup(raw_html, "html.parser")
+
+        rel_path_str = str(file_path.relative_to(base_dir))
+        bundle_path = relative_path_to_bundle_path(
+            rel_path_str, flat=config.no_merge
+        )
+
+        out_dir = Path(config.output)
+
+        # リンク抽出
+        extracted_links: list[Path] = []
+        if extract_links:
+            for anchor in soup.find_all("a", href=True):
+                href = str(anchor["href"]).strip()
+                resolved = resolve_local_link(href, file_path, base_dir)
+                if resolved and resolved.suffix.lower() in {".html", ".htm"}:
+                    extracted_links.append(resolved.resolve())
+
+        # ファイル保存または結合用データ保持
+        bundle_path_key: str | None = None
+        markdown_content: str | None = None
+
+        if config.as_html:
+            flat_name = rel_path_str.replace("/", "_")
+            dest_path = out_dir / (Path(flat_name).with_suffix(".html"))
+            dest_path.write_text(raw_html, encoding="utf-8", newline="\n")
+            logger.info("[Saved] %s", dest_path)
+        elif config.no_merge:
+            markdown = convert_local_to_markdown(
+                soup, raw_html, file_path, base_dir, config
+            )
+            dest_path = out_dir / bundle_path
+            dest_path.write_text(markdown, encoding="utf-8", newline="\n")
+            logger.info("[Saved Markdown] %s", dest_path)
+        else:
+            markdown = convert_local_to_markdown(
+                soup, raw_html, file_path, base_dir, config
+            )
+            bundle_path_key = relative_path_to_bundle_path(
+                rel_path_str, flat=False
+            )
+            markdown_content = markdown
+
+        return LocalProcessResult(
+            file_path=file_path,
+            bundle_path=bundle_path_key,
+            markdown=markdown_content,
+            extracted_links=extracted_links,
+        )
+
+    except Exception as error:
+        logger.error(
+            "ファイルの処理中にエラーが発生しました (%s): %s", file_path, error
+        )
+        return None
+
+
 def process_local_directory(config: CrawlConfig) -> None:
     """
-    ローカルディレクトリ内の HTML ファイルを再帰探索して処理
+    ローカルディレクトリ内の HTML ファイルを再帰探索して並行処理
 
     Args:
         config (CrawlConfig): クロール設定
@@ -376,42 +477,41 @@ def process_local_directory(config: CrawlConfig) -> None:
 
     logger.info("ローカルディレクトリ再帰探索を開始します (ディレクトリ: %s)", base_dir)
 
-    for file_path in html_files:
-        logger.info("Processing: %s", file_path)
-        try:
-            raw_html = file_path.read_text(encoding="utf-8", errors="replace")
-            soup = BeautifulSoup(raw_html, "html.parser")
-
-            rel_path_str = str(file_path.relative_to(base_dir))
-            bundle_path = relative_path_to_bundle_path(
-                rel_path_str, flat=config.no_merge
+    # 1スレッド指定の場合は逐次処理
+    if config.workers == 1:
+        for file_path in html_files:
+            logger.info("Processing: %s", file_path)
+            result = process_single_local_file(
+                file_path, base_dir, config, extract_links=False
             )
+            if result and result.bundle_path and result.markdown is not None:
+                ingested_data[result.bundle_path] = result.markdown
+    else:
+        # ThreadPoolExecutor による並行処理
+        with ThreadPoolExecutor(max_workers=config.workers) as executor:
+            futures = {
+                executor.submit(
+                    process_single_local_file,
+                    file_path,
+                    base_dir,
+                    config,
+                    False,
+                ): file_path
+                for file_path in html_files
+            }
 
-            if config.as_html:
-                flat_name = rel_path_str.replace("/", "_")
-                dest_path = out_dir / (Path(flat_name).with_suffix(".html"))
-                dest_path.write_text(raw_html, encoding="utf-8", newline="\n")
-                logger.info("[Saved] %s", dest_path)
-            elif config.no_merge:
-                markdown = convert_local_to_markdown(
-                    soup, raw_html, file_path, base_dir, config
-                )
-                dest_path = out_dir / bundle_path
-                dest_path.write_text(markdown, encoding="utf-8", newline="\n")
-                logger.info("[Saved Markdown] %s", dest_path)
-            else:
-                markdown = convert_local_to_markdown(
-                    soup, raw_html, file_path, base_dir, config
-                )
-                bundle_path_no_flat = relative_path_to_bundle_path(
-                    rel_path_str, flat=False
-                )
-                ingested_data[bundle_path_no_flat] = markdown
-
-        except Exception as error:
-            logger.error(
-                "ファイルの処理中にエラーが発生しました (%s): %s", file_path, error
-            )
+            for future in as_completed(futures):
+                file_path = futures[future]
+                try:
+                    result = future.result()
+                    if result and result.bundle_path and result.markdown is not None:
+                        ingested_data[result.bundle_path] = result.markdown
+                except Exception as error:
+                    logger.error(
+                        "スレッド実行中に例外が発生しました (%s): %s",
+                        file_path,
+                        error,
+                    )
 
     if not (config.as_html or config.no_merge):
         _finalize(config, ingested_data, len(html_files))
@@ -419,7 +519,7 @@ def process_local_directory(config: CrawlConfig) -> None:
 
 def process_local_file_links(config: CrawlConfig) -> None:
     """
-    起点となる HTML 内のリンクからローカル HTML を再帰追跡して処理
+    起点となる HTML 内のリンクからローカル HTML を再帰追跡して並行処理
 
     Args:
         config (CrawlConfig): クロール設定
@@ -443,61 +543,58 @@ def process_local_file_links(config: CrawlConfig) -> None:
         "ローカルファイルリンク再帰追跡を開始します (起点ファイル: %s)", start_file
     )
 
+    # 世代ごとのバッチ並行処理
     while to_visit:
-        current_file = to_visit.pop(0)
-        current_file = current_file.resolve()
-        if current_file in visited:
-            continue
+        current_batch = [f for f in to_visit if f not in visited]
+        to_visit.clear()
 
-        logger.info("Processing: %s", current_file)
+        if not current_batch:
+            break
 
-        try:
-            raw_html = current_file.read_text(encoding="utf-8", errors="replace")
-            soup = BeautifulSoup(raw_html, "html.parser")
+        for f in current_batch:
+            visited.add(f)
 
-            rel_path_str = str(current_file.relative_to(base_dir))
-            bundle_path = relative_path_to_bundle_path(
-                rel_path_str, flat=config.no_merge
-            )
-
-            if config.as_html:
-                flat_name = rel_path_str.replace("/", "_")
-                dest_path = out_dir / (Path(flat_name).with_suffix(".html"))
-                dest_path.write_text(raw_html, encoding="utf-8", newline="\n")
-                logger.info("[Saved] %s", dest_path)
-            elif config.no_merge:
-                markdown = convert_local_to_markdown(
-                    soup, raw_html, current_file, base_dir, config
+        if config.workers == 1:
+            for file_path in current_batch:
+                logger.info("Processing: %s", file_path)
+                result = process_single_local_file(
+                    file_path, base_dir, config, extract_links=True
                 )
-                dest_path = out_dir / bundle_path
-                dest_path.write_text(markdown, encoding="utf-8", newline="\n")
-                logger.info("[Saved Markdown] %s", dest_path)
-            else:
-                markdown = convert_local_to_markdown(
-                    soup, raw_html, current_file, base_dir, config
-                )
-                bundle_path_no_flat = relative_path_to_bundle_path(
-                    rel_path_str, flat=False
-                )
-                ingested_data[bundle_path_no_flat] = markdown
+                if result:
+                    if result.bundle_path and result.markdown is not None:
+                        ingested_data[result.bundle_path] = result.markdown
+                    for link in result.extracted_links:
+                        if link not in visited and link not in to_visit:
+                            to_visit.append(link)
+        else:
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {
+                    executor.submit(
+                        process_single_local_file,
+                        file_path,
+                        base_dir,
+                        config,
+                        True,
+                    ): file_path
+                    for file_path in current_batch
+                }
 
-            visited.add(current_file)
-
-            for anchor in soup.find_all("a", href=True):
-                href = str(anchor["href"]).strip()
-                resolved = resolve_local_link(href, current_file, base_dir)
-                if resolved and resolved.suffix.lower() in {".html", ".htm"}:
-                    resolved_resolved = resolved.resolve()
-                    if (
-                        resolved_resolved not in visited
-                        and resolved_resolved not in to_visit
-                    ):
-                        to_visit.append(resolved_resolved)
-
-        except Exception as error:
-            logger.error(
-                "ファイルの処理中にエラーが発生しました (%s): %s", current_file, error
-            )
+                for future in as_completed(futures):
+                    file_path = futures[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            if result.bundle_path and result.markdown is not None:
+                                ingested_data[result.bundle_path] = result.markdown
+                            for link in result.extracted_links:
+                                if link not in visited and link not in to_visit:
+                                    to_visit.append(link)
+                    except Exception as error:
+                        logger.error(
+                            "スレッド実行中に例外が発生しました (%s): %s",
+                            file_path,
+                            error,
+                        )
 
     if not (config.as_html or config.no_merge):
         _finalize(config, ingested_data, len(visited))
@@ -775,6 +872,13 @@ def cli() -> None:
         action="store_true",
         help="結合せず各ページを個別のMarkdownファイルとして保存する",
     )
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=None,
+        help="並列ワーカー数 (デフォルト: CPUコア数。1を指定すると並列化なし)",
+    )
     args = parser.parse_args()
 
     if args.url:
@@ -791,6 +895,7 @@ def cli() -> None:
             no_merge=args.no_merge,
             delay_min=args.delay,
             delay_max=args.delay_max,
+            workers=args.workers,
         )
         crawl(config)
     else:
@@ -805,6 +910,7 @@ def cli() -> None:
             no_merge=args.no_merge,
             delay_min=args.delay,
             delay_max=args.delay_max,
+            workers=args.workers,
         )
         local_path_obj = Path(args.local_path)
         if local_path_obj.is_dir():
