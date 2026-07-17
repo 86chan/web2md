@@ -500,8 +500,17 @@ def process_local_directory(config: CrawlConfig) -> None:
                 for file_path in html_files
             }
 
+            total_files = len(html_files)
+            completed_count = 0
             for future in as_completed(futures):
                 file_path = futures[future]
+                completed_count += 1
+                logger.info(
+                    "[%d/%d] Processing: %s",
+                    completed_count,
+                    total_files,
+                    file_path,
+                )
                 try:
                     result = future.result()
                     if result and result.bundle_path and result.markdown is not None:
@@ -581,6 +590,7 @@ def process_local_file_links(config: CrawlConfig) -> None:
 
                 for future in as_completed(futures):
                     file_path = futures[future]
+                    logger.info("Processing: %s", file_path)
                     try:
                         result = future.result()
                         if result:
