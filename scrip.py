@@ -57,8 +57,6 @@ class CrawlConfig:
     クロール実行設定
 
     Attributes:
-        start_url (str): クロール開始 URL
-        limit_prefix (str): クロール許可の前方一致接頭辞（末尾スラッシュ除去済み）
         output (str): 出力ファイル/ディレクトリ
         max_size (int): 1ファイル上限バイト数
         max_size_str (str): 上限の元表記
@@ -66,10 +64,11 @@ class CrawlConfig:
         no_merge (bool): Markdown 個別保存モード
         delay_min (float): リクエスト間待機のランダム下限秒数
         delay_max (float): リクエスト間待機のランダム上限秒数
+        start_url (str | None): クロール開始 URL
+        limit_prefix (str | None): クロール許可の接頭辞
+        local_path (str | None): ローカルのファイルまたはディレクトリパス
     """
 
-    start_url: str
-    limit_prefix: str
     output: str
     max_size: int
     max_size_str: str
@@ -77,6 +76,9 @@ class CrawlConfig:
     no_merge: bool
     delay_min: float
     delay_max: float
+    start_url: str | None = None
+    limit_prefix: str | None = None
+    local_path: str | None = None
 
     def next_delay(self) -> float:
         """
@@ -92,11 +94,31 @@ class CrawlConfig:
         return random.uniform(self.delay_min, self.delay_max)
 
 
+def relative_path_to_bundle_path(rel_path_str: str, flat: bool = False) -> str:
+    """
+    相対パスから成果物内相対パスへの変換
+
+    Args:
+        rel_path_str (str): スラッシュ区切りの相対パス
+        flat (bool): フラットなファイル名へ変換するか
+
+    Returns:
+        str: 成果物内の相対パス
+    """
+    path_obj = PurePosixPath(rel_path_str)
+    if path_obj.suffix.lower() in {".html", ".htm", ".txt", ".md"}:
+        base_path = str(path_obj.with_suffix(""))
+    else:
+        base_path = rel_path_str
+    name = "index" if (not base_path or base_path == "docs") else base_path
+    return (name.replace("/", "_") if flat else name) + ".md"
+
+
 def url_to_bundle_path(url: str, flat: bool = False) -> str:
     """
-    クロール対象 URL の成果物内相対パス変換
+    クロール対象 URL の成果物内相対パスへの変換
 
-    flat=False は `folder/file.md`（結合時の File 見出し）、
+    flat=False は `folder/file.md`（結合時の File 見出し）
     flat=True は `folder_file.md`（--no-merge の個別ファイル名）に対応
 
     Args:
@@ -107,13 +129,7 @@ def url_to_bundle_path(url: str, flat: bool = False) -> str:
         str: 成果物内の相対パス
     """
     relative_path = urlparse(url).path.strip("/")
-    path_obj = PurePosixPath(relative_path)
-    if path_obj.suffix.lower() in {".html", ".htm", ".txt", ".md"}:
-        base_path = str(path_obj.with_suffix(""))
-    else:
-        base_path = relative_path
-    name = "index" if (not base_path or base_path == "docs") else base_path
-    return (name.replace("/", "_") if flat else name) + ".md"
+    return relative_path_to_bundle_path(relative_path, flat=flat)
 
 
 def rewrite_links_for_bundle(
@@ -221,6 +237,7 @@ def convert_to_markdown(
     main_content = soup.find("main") or soup.find("article")
     src_html = str(main_content) if main_content else raw_html
 
+    assert config.limit_prefix is not None
     html_to_convert = rewrite_links_for_bundle(
         src_html, current_url, config.limit_prefix, flat=config.no_merge
     )
@@ -232,6 +249,258 @@ def convert_to_markdown(
         raw_markdown = soup.get_text(separator="\n", strip=True)
 
     return _format_markdown(raw_markdown).lstrip("\ufeff")
+
+
+def resolve_local_link(href: str, current_file: Path, base_dir: Path) -> Path | None:
+    """
+    ローカル HTML 内の href リンクをローカル絶対パスへ解決
+
+    ベースディレクトリ配下で存在するもののみ返す
+
+    Args:
+        href (str): リンク先文字列
+        current_file (Path): 処理中ファイルのパス
+        base_dir (Path): 探索起点となるベースディレクトリ
+
+    Returns:
+        Path | None: 解決されたローカル絶対パス
+    """
+    # 外部URLやスキーム付き、アンカーのみは除外
+    if (
+        href.startswith("#")
+        or href.startswith("javascript:")
+        or ":" in href
+        or href.startswith("//")
+    ):
+        return None
+
+    if href.startswith("/"):
+        resolved = base_dir / href.lstrip("/")
+    else:
+        resolved = (current_file.parent / href).resolve()
+
+    try:
+        resolved = resolved.resolve()
+        if resolved.is_relative_to(base_dir.resolve()) and resolved.exists():
+            return resolved
+    except (ValueError, RuntimeError):
+        pass
+    return None
+
+
+def rewrite_local_links(
+    html: str, current_file: Path, base_dir: Path, flat: bool
+) -> str:
+    """
+    ローカル HTML 内のリンクを成果物パスへ書き換え
+
+    Args:
+        html (str): 本文 HTML
+        current_file (Path): 処理中ファイルのパス
+        base_dir (Path): 探索起点となるベースディレクトリ
+        flat (bool): フラットなファイル名へ変換するか
+
+    Returns:
+        str: リンク書き換え後の HTML
+    """
+    frag = BeautifulSoup(html, "html.parser")
+    for anchor in frag.find_all("a", href=True):
+        href = str(anchor["href"]).strip()
+        if href.startswith("#"):
+            continue
+        resolved_path = resolve_local_link(href, current_file, base_dir)
+        if resolved_path and resolved_path.suffix.lower() in {".html", ".htm"}:
+            rel_path_str = str(resolved_path.relative_to(base_dir))
+            anchor["href"] = relative_path_to_bundle_path(rel_path_str, flat=flat)
+    return str(frag)
+
+
+def convert_local_to_markdown(
+    soup: BeautifulSoup,
+    raw_html: str,
+    current_file: Path,
+    base_dir: Path,
+    config: CrawlConfig,
+) -> str:
+    """
+    ローカル HTML の Markdown 変換
+
+    Args:
+        soup (BeautifulSoup): パース済み DOM
+        raw_html (str): ページ生 HTML
+        current_file (Path): 処理中ファイルのパス
+        base_dir (Path): 探索起点となるベースディレクトリ
+        config (CrawlConfig): クロール設定
+
+    Returns:
+        str: 整形済み Markdown
+    """
+    main_content = soup.find("main") or soup.find("article")
+    src_html = str(main_content) if main_content else raw_html
+
+    html_to_convert = rewrite_local_links(
+        src_html, current_file, base_dir, flat=config.no_merge
+    )
+
+    raw_markdown = markdownify(html_to_convert, heading_style="ATX", strip=["img"])
+
+    if not raw_markdown or not raw_markdown.strip():
+        raw_markdown = soup.get_text(separator="\n", strip=True)
+
+    return _format_markdown(raw_markdown).lstrip("\ufeff")
+
+
+def process_local_directory(config: CrawlConfig) -> None:
+    """
+    ローカルディレクトリ内の HTML ファイルを再帰探索して処理
+
+    Args:
+        config (CrawlConfig): クロール設定
+    """
+    assert config.local_path is not None
+    base_dir = Path(config.local_path).resolve()
+    if not base_dir.is_dir():
+        logger.error("指定されたパスはディレクトリではありません: %s", base_dir)
+        return
+
+    html_files: list[Path] = []
+    for ext in ("*.html", "*.htm"):
+        html_files.extend(base_dir.rglob(ext))
+
+    html_files.sort()
+
+    ingested_data: dict[str, str] = {}
+    out_dir = Path(config.output)
+    if config.as_html or config.no_merge:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("ローカルディレクトリ再帰探索を開始します (ディレクトリ: %s)", base_dir)
+
+    for file_path in html_files:
+        logger.info("Processing: %s", file_path)
+        try:
+            raw_html = file_path.read_text(encoding="utf-8", errors="replace")
+            soup = BeautifulSoup(raw_html, "html.parser")
+
+            rel_path_str = str(file_path.relative_to(base_dir))
+            bundle_path = relative_path_to_bundle_path(
+                rel_path_str, flat=config.no_merge
+            )
+
+            if config.as_html:
+                flat_name = rel_path_str.replace("/", "_")
+                dest_path = out_dir / (Path(flat_name).with_suffix(".html"))
+                dest_path.write_text(raw_html, encoding="utf-8", newline="\n")
+                logger.info("[Saved] %s", dest_path)
+            elif config.no_merge:
+                markdown = convert_local_to_markdown(
+                    soup, raw_html, file_path, base_dir, config
+                )
+                dest_path = out_dir / bundle_path
+                dest_path.write_text(markdown, encoding="utf-8", newline="\n")
+                logger.info("[Saved Markdown] %s", dest_path)
+            else:
+                markdown = convert_local_to_markdown(
+                    soup, raw_html, file_path, base_dir, config
+                )
+                bundle_path_no_flat = relative_path_to_bundle_path(
+                    rel_path_str, flat=False
+                )
+                ingested_data[bundle_path_no_flat] = markdown
+
+        except Exception as error:
+            logger.error(
+                "ファイルの処理中にエラーが発生しました (%s): %s", file_path, error
+            )
+
+    if not (config.as_html or config.no_merge):
+        _finalize(config, ingested_data, len(html_files))
+
+
+def process_local_file_links(config: CrawlConfig) -> None:
+    """
+    起点となる HTML 内のリンクからローカル HTML を再帰追跡して処理
+
+    Args:
+        config (CrawlConfig): クロール設定
+    """
+    assert config.local_path is not None
+    start_file = Path(config.local_path).resolve()
+    if not start_file.is_file():
+        logger.error("指定されたパスはファイルではありません: %s", start_file)
+        return
+
+    base_dir = start_file.parent
+
+    visited: set[Path] = set()
+    to_visit: list[Path] = [start_file]
+    ingested_data: dict[str, str] = {}
+    out_dir = Path(config.output)
+    if config.as_html or config.no_merge:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "ローカルファイルリンク再帰追跡を開始します (起点ファイル: %s)", start_file
+    )
+
+    while to_visit:
+        current_file = to_visit.pop(0)
+        current_file = current_file.resolve()
+        if current_file in visited:
+            continue
+
+        logger.info("Processing: %s", current_file)
+
+        try:
+            raw_html = current_file.read_text(encoding="utf-8", errors="replace")
+            soup = BeautifulSoup(raw_html, "html.parser")
+
+            rel_path_str = str(current_file.relative_to(base_dir))
+            bundle_path = relative_path_to_bundle_path(
+                rel_path_str, flat=config.no_merge
+            )
+
+            if config.as_html:
+                flat_name = rel_path_str.replace("/", "_")
+                dest_path = out_dir / (Path(flat_name).with_suffix(".html"))
+                dest_path.write_text(raw_html, encoding="utf-8", newline="\n")
+                logger.info("[Saved] %s", dest_path)
+            elif config.no_merge:
+                markdown = convert_local_to_markdown(
+                    soup, raw_html, current_file, base_dir, config
+                )
+                dest_path = out_dir / bundle_path
+                dest_path.write_text(markdown, encoding="utf-8", newline="\n")
+                logger.info("[Saved Markdown] %s", dest_path)
+            else:
+                markdown = convert_local_to_markdown(
+                    soup, raw_html, current_file, base_dir, config
+                )
+                bundle_path_no_flat = relative_path_to_bundle_path(
+                    rel_path_str, flat=False
+                )
+                ingested_data[bundle_path_no_flat] = markdown
+
+            visited.add(current_file)
+
+            for anchor in soup.find_all("a", href=True):
+                href = str(anchor["href"]).strip()
+                resolved = resolve_local_link(href, current_file, base_dir)
+                if resolved and resolved.suffix.lower() in {".html", ".htm"}:
+                    resolved_resolved = resolved.resolve()
+                    if (
+                        resolved_resolved not in visited
+                        and resolved_resolved not in to_visit
+                    ):
+                        to_visit.append(resolved_resolved)
+
+        except Exception as error:
+            logger.error(
+                "ファイルの処理中にエラーが発生しました (%s): %s", current_file, error
+            )
+
+    if not (config.as_html or config.no_merge):
+        _finalize(config, ingested_data, len(visited))
 
 
 def enqueue_links(
@@ -253,6 +522,7 @@ def enqueue_links(
         visited (set[str]): 訪問済み URL 集合
         to_visit (list[str]): クロール待ちキュー
     """
+    assert config.limit_prefix is not None
     for link in soup.find_all("a", href=True):
         full_url = urljoin(current_url, str(link["href"]))
         clean_url = full_url.split("#")[0].rstrip("/")
@@ -297,6 +567,7 @@ def crawl(config: CrawlConfig) -> None:
     Args:
         config (CrawlConfig): クロール設定
     """
+    assert config.start_url is not None
     visited: set[str] = set()
     to_visit: list[str] = [config.start_url]
     retry_counts: dict[str, int] = {}
@@ -448,9 +719,19 @@ def cli() -> None:
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument(
-        "-u", "--url", type=str, required=True, help="クロールを開始するURL"
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-u", "--url", type=str, help="クロールを開始するURL")
+    group.add_argument(
+        "-l",
+        "--local-path",
+        type=str,
+        help=(
+            "ローカルのHTMLファイルまたはディレクトリのパス\n"
+            "(ディレクトリなら全HTML探索、ファイルならリンク再帰追跡)"
+        ),
     )
+
     parser.add_argument(
         "-p",
         "--prefix",
@@ -496,20 +777,40 @@ def cli() -> None:
     )
     args = parser.parse_args()
 
-    start_url = args.url
-    limit_prefix = (args.prefix if args.prefix else start_url).rstrip("/")
-    config = CrawlConfig(
-        start_url=start_url,
-        limit_prefix=limit_prefix,
-        output=args.output,
-        max_size=parse_size(args.max_size),
-        max_size_str=args.max_size,
-        as_html=args.html,
-        no_merge=args.no_merge,
-        delay_min=args.delay,
-        delay_max=args.delay_max,
-    )
-    crawl(config)
+    if args.url:
+        start_url = args.url
+        limit_prefix = (args.prefix if args.prefix else start_url).rstrip("/")
+        config = CrawlConfig(
+            start_url=start_url,
+            limit_prefix=limit_prefix,
+            local_path=None,
+            output=args.output,
+            max_size=parse_size(args.max_size),
+            max_size_str=args.max_size,
+            as_html=args.html,
+            no_merge=args.no_merge,
+            delay_min=args.delay,
+            delay_max=args.delay_max,
+        )
+        crawl(config)
+    else:
+        config = CrawlConfig(
+            start_url=None,
+            limit_prefix=None,
+            local_path=args.local_path,
+            output=args.output,
+            max_size=parse_size(args.max_size),
+            max_size_str=args.max_size,
+            as_html=args.html,
+            no_merge=args.no_merge,
+            delay_min=args.delay,
+            delay_max=args.delay_max,
+        )
+        local_path_obj = Path(args.local_path)
+        if local_path_obj.is_dir():
+            process_local_directory(config)
+        else:
+            process_local_file_links(config)
 
 
 if __name__ == "__main__":
