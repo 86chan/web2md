@@ -26,39 +26,40 @@ pip install -r requirements.txt
 ### 実行
 
 ```bash
-python scrip.py -u <開始URL> -o <出力ファイル名> [オプション]
+python scrip.py [-u <開始URL> | -l <ローカルパス>] -o <出力ファイル名> [オプション]
 ```
 
 #### オプション
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
-| `-u, --url` | **必須** | クロールを開始するURL |
-| `-p, --prefix` | URLと同等 | クロールを許可するURLの接頭辞（制限用） |
-| `-o, --output` | **必須** | 出力ファイル名（`--no-merge`時は出力ディレクトリ名） |
+| `-u, --url` | `-l` といずれか**必須** | クロールを開始するURL |
+| `-l, --local-path` | `-u` といずれか**必須** | ローカルのHTMLファイル（リンク追跡）またはディレクトリ（再帰探索）のパス |
+| `-p, --prefix` | URLと同等 | クロールを許可するURLの接頭辞（制限用、Webモードのみ有効） |
+| `-o, --output` | **必須** | 出力ファイル名（`--no-merge`時や`--html`時は出力ディレクトリ名） |
 | `-m, --max-size` | `1MB` | 1ファイルあたりの最大サイズ（例: `500KB`, `1.5MB`, `1048576`） |
-| `-d, --delay` | `0.5` | リクエスト間ランダム待機の下限秒数（サーバ負荷軽減） |
-| `--delay-max` | `1.7` | リクエスト間ランダム待機の上限秒数 |
+| `-d, --delay` | `0.5` | リクエスト間ランダム待機の下限秒数（サーバ負荷軽減、Webモードのみ有効） |
+| `--delay-max` | `1.7` | リクエスト間ランダム待機の上限秒数（Webモードのみ有効） |
 | `--html` | `False` | Markdown変換を行わず生のHTMLとして保存 |
 | `--no-merge` | `False` | 結合せず各ページを個別のMarkdownファイルとして保存 |
 
 #### 実行例
 
 ```bash
-# 1MB以内のファイルに分割して集約（デフォルト）
+# Webクロール: 1MB以内のファイルに分割して集約（デフォルト）
 python scrip.py -u https://example.com/docs -o docs.md
 
-# クロール範囲を特定のディレクトリ以下に制限
+# Webクロール: クロール範囲を特定のディレクトリ以下に制限
 python scrip.py -u https://example.com/docs -p https://example.com/docs/api -o api.md
 
-# 個別のMarkdownファイルとして保存（-o はディレクトリ名になる）
-python scrip.py -u https://example.com/docs -o output_dir --no-merge
+# ローカル: 指定ディレクトリ内のすべてのHTMLファイルを再帰探索して集約
+python scrip.py -l ./local_site -o local_docs.md
+
+# ローカル: 起点HTMLからリンクされているファイルを再帰追跡して個別に保存
+python scrip.py -l ./local_site/index.html -o output_dir --no-merge
 
 # 500KB ごとに分割
 python scrip.py -u https://example.com/docs -o split.md -m 500KB
-
-# リクエスト間に 0.5〜1.7 秒のランダム待機を入れてクロール（既定動作・サーバ負荷軽減）
-python scrip.py -u https://example.com/docs -o docs.md --delay 0.5 --delay-max 1.7
 ```
 
 ## 出力形式
