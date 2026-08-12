@@ -195,7 +195,7 @@ def _resolve_encoding(response: requests.Response) -> str:
     """
     if response.encoding == "ISO-8859-1" or not response.encoding:
         return response.apparent_encoding or "utf-8"
-    return response.encoding
+    return str(response.encoding)
 
 
 def _format_markdown(raw_markdown: str) -> str:
