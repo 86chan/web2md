@@ -16,6 +16,8 @@ export GODOT_SHARP_DIR=${HOME}/Godot_Mono/Godot_v4.7.1-stable_mono_linux_x86_64/
 export GODOT_EXECUTABLE=${HOME}/Godot_Mono/Godot_v4.7.1-stable_mono_linux_x86_64/Godot_v4.7.1-stable_mono_linux.x86_64
 export PATH=${DOTNET_ROOT}:${DOTNET_ROOT}/tools:${PATH}
 ENVEOF
+  # Source the env file to apply variables in current session
+  source "$CLAUDE_ENV_FILE"
 fi
 
 # Also set in current session
